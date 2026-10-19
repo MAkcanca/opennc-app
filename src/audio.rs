@@ -56,6 +56,11 @@ impl Runner {
     /// Loads the model, opens both devices and starts processing. Returns once audio is flowing or with the error.
     pub fn start(model_dir: PathBuf, mic: String, output: String, strength: f32) -> Result<Runner> {
         let engine = Engine::new(&model_dir).with_context(|| format!("loading model from {}", model_dir.display()))?;
+        Self::start_with(engine, mic, output, strength)
+    }
+
+    /// Same with an engine that was loaded ahead of time (the window pre-loads one so starting is instant).
+    pub fn start_with(engine: Engine, mic: String, output: String, strength: f32) -> Result<Runner> {
         let shared = Arc::new(Shared {
             running: AtomicBool::new(true),
             in_level: AtomicU32::new((-100f32).to_bits()),

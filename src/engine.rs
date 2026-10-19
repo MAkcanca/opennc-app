@@ -73,7 +73,15 @@ impl Engine {
         fn oe<R>(e: ort::Error<R>) -> anyhow::Error {
             anyhow::anyhow!("onnxruntime: {e}")
         }
-        let env = ort::init().build().map_err(oe)?;
+        // onnxruntime allows one environment per process: create it once, reuse it for every engine.
+        static ENV: std::sync::OnceLock<std::sync::Arc<ort::environment::Environment>> = std::sync::OnceLock::new();
+        let env = match ENV.get() {
+            Some(e) => e.clone(),
+            None => {
+                let e = ort::init().build().map_err(oe)?;
+                ENV.get_or_init(|| std::sync::Arc::new(e)).clone()
+            }
+        };
         let session = Session::builder(&env)
             .map_err(oe)?
             .with_optimization_level(GraphOptimizationLevel::Level3)

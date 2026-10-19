@@ -1,13 +1,13 @@
 //! OpenNC desktop: pick a microphone and the virtual cable, press the power button, select "CABLE Output" as the mic in
-//! your apps. UI in ui/app.slint; audio in the library.
+//! your apps. UI in ui/app.slint; audio in the library. Start and stop run off the UI thread so the window never freezes.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use opennc::audio::{self, Runner, Shared};
+use opennc::Engine;
 use serde::{Deserialize, Serialize};
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
-use std::cell::RefCell;
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 slint::include_modules!();
@@ -63,10 +63,25 @@ fn model_dir(cfg: &Config) -> PathBuf {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Off,
+    Starting,
+    On,
+    Stopping,
+}
+
 struct State {
     cfg: Config,
+    phase: Phase,
     runner: Option<Runner>,
+    /// Engine loaded ahead of time so pressing the button opens the devices and nothing else.
+    prepared: Option<Engine>,
+    shown_mic: f32,
+    shown_clean: f32,
 }
+
+type Shared_ = Arc<Mutex<State>>;
 
 fn strings(v: &[String]) -> ModelRc<SharedString> {
     ModelRc::new(VecModel::from(v.iter().map(SharedString::from).collect::<Vec<_>>()))
@@ -98,51 +113,149 @@ fn idle_message(cfg: &Config) -> String {
     }
 }
 
+fn live_message(cfg: &Config) -> String {
+    if is_cable(&cfg.output) {
+        "Live. Your apps should use \"CABLE Output\" as their microphone.".into()
+    } else {
+        "Live.".into()
+    }
+}
+
+/// Load the next engine in the background so the next start is instant.
+fn prepare_engine(state: &Shared_) {
+    let dir = model_dir(&state.lock().unwrap().cfg);
+    let state = state.clone();
+    std::thread::spawn(move || {
+        if let Ok(e) = Engine::new(&dir) {
+            let mut st = state.lock().unwrap();
+            if st.prepared.is_none() {
+                st.prepared = Some(e);
+            }
+        }
+    });
+}
+
+fn start(ui: Weak<AppWindow>, state: Shared_) {
+    let (engine, mic, output, strength, dir) = {
+        let mut st = state.lock().unwrap();
+        if st.phase != Phase::Off {
+            return;
+        }
+        st.phase = Phase::Starting;
+        save_config(&st.cfg);
+        (st.prepared.take(), st.cfg.mic.clone(), st.cfg.output.clone(), st.cfg.strength, model_dir(&st.cfg))
+    };
+    if let Some(ui) = ui.upgrade() {
+        ui.set_busy(true);
+        ui.set_error(false);
+        ui.set_message("Starting".into());
+    }
+    std::thread::spawn(move || {
+        let engine = match engine {
+            Some(e) => Ok(e),
+            None => Engine::new(&dir).map_err(|e| anyhow::anyhow!("loading model from {}: {e:#}", dir.display())),
+        };
+        let result = engine.and_then(|e| Runner::start_with(e, mic, output, strength));
+        let state2 = state.clone();
+        let _ = ui.upgrade_in_event_loop(move |ui| {
+            let mut st = state2.lock().unwrap();
+            ui.set_busy(false);
+            match result {
+                Ok(r) => {
+                    st.runner = Some(r);
+                    st.phase = Phase::On;
+                    ui.set_active(true);
+                    ui.set_message(live_message(&st.cfg).into());
+                }
+                Err(e) => {
+                    st.phase = Phase::Off;
+                    eprintln!("start failed: {e:#}");
+                    ui.set_active(false);
+                    ui.set_error(true);
+                    ui.set_message(format!("{e:#}").into());
+                }
+            }
+        });
+    });
+}
+
+fn stop(ui: Weak<AppWindow>, state: Shared_) {
+    let runner = {
+        let mut st = state.lock().unwrap();
+        if st.phase != Phase::On {
+            return;
+        }
+        st.phase = Phase::Stopping;
+        st.shown_mic = -90.0;
+        st.shown_clean = -90.0;
+        st.runner.take()
+    };
+    if let Some(ui) = ui.upgrade() {
+        ui.set_busy(true);
+        ui.set_active(false);
+        ui.set_message("Stopping".into());
+        ui.set_mic_level(0.0);
+        ui.set_clean_level(0.0);
+        ui.set_mic_db("".into());
+        ui.set_clean_db("".into());
+    }
+    std::thread::spawn(move || {
+        drop(runner); // joins the audio thread and closes the devices
+        let state2 = state.clone();
+        let _ = ui.upgrade_in_event_loop(move |ui| {
+            let mut st = state2.lock().unwrap();
+            st.phase = Phase::Off;
+            ui.set_busy(false);
+            ui.set_error(false);
+            ui.set_message(idle_message(&st.cfg).into());
+            drop(st);
+            prepare_engine(&state2);
+        });
+    });
+}
+
+/// Windows draws a light title bar by default; ask DWM for the dark one so the frame matches the app.
+#[cfg(windows)]
+fn dark_title_bar(ui: &AppWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let holder = ui.window().window_handle();
+    let Ok(handle) = holder.window_handle() else { return };
+    if let RawWindowHandle::Win32(w) = handle.as_raw() {
+        let on: i32 = 1;
+        const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(w.hwnd.get() as _, DWMWA_USE_IMMERSIVE_DARK_MODE, &on as *const i32 as *const _, 4);
+        }
+    }
+}
+#[cfg(not(windows))]
+fn dark_title_bar(_ui: &AppWindow) {}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let mut cfg = load_config();
     populate_devices(&ui, &mut cfg);
     ui.set_strength(cfg.strength);
     ui.set_message(idle_message(&cfg).into());
-    let state = Rc::new(RefCell::new(State { cfg, runner: None }));
+    let state: Shared_ = Arc::new(Mutex::new(State { cfg, phase: Phase::Off, runner: None, prepared: None, shown_mic: -90.0, shown_clean: -90.0 }));
+    prepare_engine(&state);
 
     ui.on_toggle({
         let ui = ui.as_weak();
         let state = state.clone();
         move || {
-            let ui = ui.unwrap();
-            let mut st = state.borrow_mut();
-            if st.runner.is_some() {
-                st.runner = None; // Drop stops the audio thread
-                ui.set_active(false);
-                ui.set_error(false);
-                ui.set_message(idle_message(&st.cfg).into());
-                ui.set_mic_level(0.0);
-                ui.set_clean_level(0.0);
-                ui.set_mic_db("".into());
-                ui.set_clean_db("".into());
-                return;
-            }
-            save_config(&st.cfg);
-            match Runner::start(model_dir(&st.cfg), st.cfg.mic.clone(), st.cfg.output.clone(), st.cfg.strength) {
-                Ok(r) => {
-                    st.runner = Some(r);
-                    ui.set_active(true);
-                    ui.set_error(false);
-                    ui.set_message(if is_cable(&st.cfg.output) { "Live. Your apps should use \"CABLE Output\" as their microphone.".into() } else { "Live.".into() });
-                }
-                Err(e) => {
-                    ui.set_active(false);
-                    ui.set_error(true);
-                    ui.set_message(format!("{e:#}").into());
-                }
+            let phase = state.lock().unwrap().phase;
+            match phase {
+                Phase::Off => start(ui.clone(), state.clone()),
+                Phase::On => stop(ui.clone(), state.clone()),
+                _ => {}
             }
         }
     });
     ui.on_mic_changed({
         let state = state.clone();
         move |v| {
-            let mut st = state.borrow_mut();
+            let mut st = state.lock().unwrap();
             st.cfg.mic = v.to_string();
             save_config(&st.cfg);
         }
@@ -151,10 +264,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let state = state.clone();
         move |v| {
-            let mut st = state.borrow_mut();
+            let mut st = state.lock().unwrap();
             st.cfg.output = v.to_string();
             save_config(&st.cfg);
-            if st.runner.is_none() {
+            if st.phase == Phase::Off {
                 ui.unwrap().set_message(idle_message(&st.cfg).into());
             }
         }
@@ -162,7 +275,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_strength_changed({
         let state = state.clone();
         move |v| {
-            let mut st = state.borrow_mut();
+            let mut st = state.lock().unwrap();
             st.cfg.strength = v;
             if let Some(r) = &st.runner {
                 Shared::set_f32(&r.shared.strength, v);
@@ -174,41 +287,53 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let state = state.clone();
         move || {
-            let mut st = state.borrow_mut();
+            let mut st = state.lock().unwrap();
             populate_devices(&ui.unwrap(), &mut st.cfg);
         }
     });
 
-    // meters and liveness, 20 times a second while running
+    // meters with fast attack / slow release, and liveness, 25 times a second
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, Duration::from_millis(50), {
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(40), {
         let ui = ui.as_weak();
         let state = state.clone();
         move || {
             let ui = ui.unwrap();
-            let mut st = state.borrow_mut();
+            let mut st = state.lock().unwrap();
+            if st.phase != Phase::On {
+                return;
+            }
             let Some(r) = &st.runner else { return };
             if !r.shared.running.load(Ordering::SeqCst) {
                 let why = r.shared.status.lock().unwrap().clone();
                 st.runner = None;
+                st.phase = Phase::Off;
                 ui.set_active(false);
                 ui.set_error(true);
                 ui.set_message(if why.is_empty() { "The audio device stopped.".into() } else { why.into() });
+                ui.set_mic_level(0.0);
+                ui.set_clean_level(0.0);
                 return;
             }
-            let (mic, clean) = (Shared::get_f32(&r.shared.in_level).max(-90.0), Shared::get_f32(&r.shared.out_level).max(-90.0));
-            let frac = |db: f32| ((db + 60.0) / 60.0).clamp(0.0, 1.0);
-            let text = |db: f32| if db <= -90.0 { "silent".to_string() } else { format!("{db:.0} dB") };
-            ui.set_mic_level(frac(mic));
-            ui.set_clean_level(frac(clean));
-            ui.set_mic_db(text(mic).into());
-            ui.set_clean_db(text(clean).into());
+            let mic = Shared::get_f32(&r.shared.in_level).max(-90.0);
+            let clean = Shared::get_f32(&r.shared.out_level).max(-90.0);
             let drops = r.shared.in_drops.load(Ordering::Relaxed) + r.shared.out_underruns.load(Ordering::Relaxed);
+            st.shown_mic = mic.max(st.shown_mic - 2.5);
+            st.shown_clean = clean.max(st.shown_clean - 2.5);
+            let frac = |db: f32| ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+            let text = |db: f32| if db <= -89.0 { "silent".to_string() } else { format!("{db:.0} dB") };
+            ui.set_mic_level(frac(st.shown_mic));
+            ui.set_clean_level(frac(st.shown_clean));
+            ui.set_mic_db(text(st.shown_mic).into());
+            ui.set_clean_db(text(st.shown_clean).into());
             if drops > 2 && !ui.get_error() {
                 ui.set_message(format!("Live. {drops} audio buffers dropped so far.").into());
             }
         }
     });
 
-    ui.run()
+    ui.show()?;
+    dark_title_bar(&ui);
+    slint::run_event_loop()?;
+    ui.hide()
 }

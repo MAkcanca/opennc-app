@@ -53,23 +53,57 @@ component Meter inherits VerticalLayout {
             width: parent.width * root.level;
             border-radius: 4px;
             background: root.fill;
-            animate width { duration: 90ms; easing: ease-out; }
+            animate width { duration: 120ms; easing: ease-out; }
         }
     }
 }
 
+// Layered so every transition is an opacity crossfade (brush-to-gradient interpolation is not smooth):
+// glow (shadow only) -> dark base -> gradient face -> icon.
 component PowerButton inherits Rectangle {
     in property <bool> active;
+    in property <bool> busy;
     callback clicked;
+    property <length> size: ta.pressed && !root.busy ? 90px : 96px;
+    property <float> on: root.active ? 1.0 : 0.0;
     width: 96px;
     height: 96px;
-    border-radius: 48px;
-    background: root.active ? @linear-gradient(135deg, Theme.accent, Theme.accent2) : #1f2330;
-    border-width: root.active ? 0px : 2px;
-    border-color: #2d3242;
-    drop-shadow-blur: root.active ? 28px : 0px;
-    drop-shadow-color: root.active ? Theme.accent.with-alpha(0.55) : transparent;
-    animate background, drop-shadow-blur, drop-shadow-color { duration: 220ms; easing: ease-in-out; }
+    glow := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.size;
+        height: root.size;
+        border-radius: self.width / 2;
+        background: Theme.accent;
+        drop-shadow-blur: 30px;
+        drop-shadow-color: Theme.accent.with-alpha(0.6);
+        opacity: root.on;
+        animate opacity { duration: 360ms; easing: ease-in-out; }
+        animate width, height { duration: 120ms; easing: ease-out; }
+    }
+    base := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.size;
+        height: root.size;
+        border-radius: self.width / 2;
+        background: ta.has-hover && !root.active && !root.busy ? #262b3a : #1f2330;
+        border-width: 2px;
+        border-color: ta.has-hover && !root.active && !root.busy ? #3a4050 : #2d3242;
+        animate background, border-color { duration: 150ms; }
+        animate width, height { duration: 120ms; easing: ease-out; }
+    }
+    face := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.size;
+        height: root.size;
+        border-radius: self.width / 2;
+        background: @linear-gradient(135deg, Theme.accent, Theme.accent2);
+        opacity: root.on;
+        animate opacity { duration: 360ms; easing: ease-in-out; }
+        animate width, height { duration: 120ms; easing: ease-out; }
+    }
     Path {
         width: 36px;
         height: 36px;
@@ -81,15 +115,15 @@ component PowerButton inherits Rectangle {
         stroke: root.active ? white : Theme.muted;
         stroke-width: 2.2px;
         fill: transparent;
-        animate stroke { duration: 200ms; }
+        opacity: root.busy ? 0.6 : 1.0;
+        animate stroke { duration: 360ms; easing: ease-in-out; }
+        animate opacity { duration: 150ms; }
     }
     ta := TouchArea {
-        mouse-cursor: pointer;
+        enabled: !root.busy;
+        mouse-cursor: root.busy ? default : pointer;
         clicked => { root.clicked(); }
     }
-    states [
-        hover when ta.has-hover && !root.active: { background: #262b3a; }
-    ]
 }
 
 component StrengthSlider inherits Rectangle {
@@ -115,20 +149,54 @@ component StrengthSlider inherits Rectangle {
             background: @linear-gradient(90deg, Theme.accent, Theme.accent2);
         }
     }
-    Rectangle {
+    knob-rect := Rectangle {
         x: root.usable * root.value / 100;
         y: (parent.height - self.height) / 2;
         width: root.knob;
         height: root.knob;
         border-radius: root.knob / 2;
         background: white;
-        drop-shadow-blur: 6px;
-        drop-shadow-color: #00000080;
+        drop-shadow-blur: ta.has-hover || ta.pressed ? 10px : 6px;
+        drop-shadow-color: ta.pressed ? Theme.accent.with-alpha(0.6) : #00000080;
+        animate drop-shadow-blur, drop-shadow-color { duration: 150ms; }
     }
     ta := TouchArea {
         mouse-cursor: pointer;
         moved => { if (self.pressed) { root.set-from-x(self.mouse-x); } }
         pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.set-from-x(self.mouse-x); } }
+    }
+}
+
+component StatusPill inherits Rectangle {
+    in property <bool> active;
+    in property <bool> busy;
+    property <color> tint: root.active ? Theme.ok : (root.busy ? Theme.accent2 : Theme.muted);
+    height: 24px;
+    width: 84px; // fixed so the header never reflows when the label changes
+    border-radius: 12px;
+    background: root.active ? Theme.ok.with-alpha(0.15) : (root.busy ? Theme.accent2.with-alpha(0.12) : Theme.track);
+    animate background { duration: 260ms; }
+    lay := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            y: (parent.height - self.height) / 2;
+            background: root.tint;
+            animate background { duration: 260ms; }
+        }
+        Text {
+            text: root.busy ? (root.active ? "Stopping" : "Starting") : (root.active ? "Active" : "Off");
+            color: root.tint;
+            font-size: 12px;
+            font-weight: 500;
+            vertical-alignment: center;
+            animate color { duration: 260ms; }
+        }
     }
 }
 
@@ -147,6 +215,7 @@ export component AppWindow inherits Window {
     in-out property <string> output;
     in-out property <float> strength: 100;
     in property <bool> active;
+    in property <bool> busy;
     in property <float> mic-level;
     in property <float> clean-level;
     in property <string> mic-db: "";
@@ -179,30 +248,32 @@ export component AppWindow inherits Window {
             }
             Text { text: "OpenNC"; color: Theme.text; font-size: 18px; font-weight: 600; vertical-alignment: center; }
             Rectangle { }
-            Rectangle {
-                width: 70px;
-                height: 24px;
-                border-radius: 12px;
-                background: root.active ? Theme.ok.with-alpha(0.15) : Theme.track;
-                animate background { duration: 200ms; }
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    spacing: 6px;
-                    alignment: center;
-                    Rectangle { width: 8px; height: 8px; border-radius: 4px; y: (parent.height - self.height) / 2; background: root.active ? Theme.ok : Theme.muted; }
-                    Text { text: root.active ? "Active" : "Off"; color: root.active ? Theme.ok : Theme.muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
-                }
-            }
+            StatusPill { active: root.active; busy: root.busy; }
         }
 
         // hero
         VerticalLayout {
             spacing: 10px;
             padding-top: 6px;
-            HorizontalLayout { alignment: center; PowerButton { active: root.active; clicked => { root.toggle(); } } }
-            Text { text: root.active ? "Noise cancellation is on" : "Noise cancellation is off"; color: Theme.text; font-size: 15px; font-weight: 500; horizontal-alignment: center; }
-            Text { text: root.message; color: root.error ? Theme.danger : Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+            HorizontalLayout { alignment: center; PowerButton { active: root.active; busy: root.busy; clicked => { root.toggle(); } } }
+            Text {
+                text: root.busy ? (root.active ? "Shutting down" : "Starting up") : (root.active ? "Noise cancellation is on" : "Noise cancellation is off");
+                color: Theme.text;
+                font-size: 15px;
+                font-weight: 500;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.message;
+                color: root.error ? Theme.danger : Theme.muted;
+                font-size: 12px;
+                height: 36px; // always two lines tall so the cards below never move when the message changes
+                horizontal-alignment: center;
+                vertical-alignment: top;
+                wrap: word-wrap;
+                overflow: elide;
+                animate color { duration: 200ms; }
+            }
         }
 
         // meters
@@ -221,17 +292,17 @@ export component AppWindow inherits Window {
                 padding: 16px;
                 spacing: 8px;
                 Label { text: "Microphone"; }
-                ComboBox { model: root.inputs; current-value: root.mic; enabled: !root.active; selected(v) => { root.mic = v; root.mic-changed(v); } }
+                ComboBox { model: root.inputs; current-value: root.mic; enabled: !root.active && !root.busy; selected(v) => { root.mic = v; root.mic-changed(v); } }
                 Rectangle { height: 4px; }
                 Label { text: "Send clean audio to"; }
-                ComboBox { model: root.outputs; current-value: root.output; enabled: !root.active; selected(v) => { root.output = v; root.output-changed(v); } }
+                ComboBox { model: root.outputs; current-value: root.output; enabled: !root.active && !root.busy; selected(v) => { root.output = v; root.output-changed(v); } }
                 HorizontalLayout {
                     alignment: end;
                     Rectangle {
                         width: refresh.width;
                         height: refresh.height;
-                        refresh-ta := TouchArea { mouse-cursor: pointer; enabled: !root.active; clicked => { root.refresh-devices(); } }
-                        refresh := Text { text: "Refresh devices"; color: refresh-ta.has-hover ? Theme.text : Theme.faint; font-size: 12px; }
+                        refresh-ta := TouchArea { mouse-cursor: pointer; enabled: !root.active && !root.busy; clicked => { root.refresh-devices(); } }
+                        refresh := Text { text: "Refresh devices"; color: refresh-ta.has-hover ? Theme.text : Theme.faint; font-size: 12px; animate color { duration: 150ms; } }
                     }
                 }
             }
