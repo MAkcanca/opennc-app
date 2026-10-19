@@ -37,6 +37,9 @@ sink as the cable), but there are no packaged builds yet.
   validated against the reference implementation to 3e-5).
 - **Audio:** one thread owns the microphone and the output at 48 kHz with 10 ms buffers; latency from microphone to cable
   is about 50 ms (`src/audio.rs`). If a device disappears, OpenNC waits and resumes when it is back.
+- **Footprint, measured** (Ryzen 7 7700, release build, 10 s samples): 14 % of one core while noise cancellation is on
+  (engine 8.5 %, the rest is audio I/O and meters), 0 % when off, 150 MB of memory off and 185 MB on, no GPU use. Window
+  open or hidden in the tray makes no difference.
 - **App:** Rust, [Slint](https://slint.dev) for the interface, [cpal](https://github.com/RustAudio/cpal) for audio,
   [ort](https://ort.pyke.io) for onnxruntime. Settings in `%APPDATA%\OpenNC\config.json`, log in `opennc.log` next to it.
 
