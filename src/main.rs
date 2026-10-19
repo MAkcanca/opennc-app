@@ -196,12 +196,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_message(if why.is_empty() { "The audio device stopped.".into() } else { why.into() });
                 return;
             }
-            let (mic, clean) = (Shared::get_f32(&r.shared.in_level), Shared::get_f32(&r.shared.out_level));
+            let (mic, clean) = (Shared::get_f32(&r.shared.in_level).max(-90.0), Shared::get_f32(&r.shared.out_level).max(-90.0));
             let frac = |db: f32| ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+            let text = |db: f32| if db <= -90.0 { "silent".to_string() } else { format!("{db:.0} dB") };
             ui.set_mic_level(frac(mic));
             ui.set_clean_level(frac(clean));
-            ui.set_mic_db(format!("{mic:.0} dB").into());
-            ui.set_clean_db(format!("{clean:.0} dB").into());
+            ui.set_mic_db(text(mic).into());
+            ui.set_clean_db(text(clean).into());
             let drops = r.shared.in_drops.load(Ordering::Relaxed) + r.shared.out_underruns.load(Ordering::Relaxed);
             if drops > 2 && !ui.get_error() {
                 ui.set_message(format!("Live. {drops} audio buffers dropped so far.").into());
