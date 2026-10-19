@@ -30,16 +30,25 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slint = { version = "1.18", features = ["raw-window-handle-06"] }
 raw-window-handle = "0.6"
+tray-icon = "0.26"
+png = "0.17"
+open = "5"
+semver = "1"
+sha2 = "0.10"
+# The OS's own TLS stack (SChannel / Security.framework / OpenSSL): no bundled crypto.
+ureq = { version = "3.4", default-features = false, features = ["native-tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+winreg = "0.56"
 
 [build-dependencies]
 slint-build = "1.18"
+winresource = "0.1"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# panics unwind so a failing background thread (update check, audio) can never take the whole app down
 strip = true

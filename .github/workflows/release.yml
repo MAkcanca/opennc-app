@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check that Cargo.toml matches the tag
+        shell: bash
+        run: |
+          V=${GITHUB_REF_NAME#v}
+          grep -q "^version = \"$V\"" Cargo.toml || { echo "Cargo.toml version is not $V"; exit 1; }
+
+      - name: Fetch the model from the OpenNC release
+        shell: bash
+        run: |
+          mkdir -p models/opennc-v1
+          curl -sSL -o model.zip https://github.com/MAkcanca/OpenNC/releases/download/v1/opennc-v1-stream.zip
+          unzip -o model.zip -d models/opennc-v1
+          ls -la models/opennc-v1
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Engine matches the reference
+        run: cargo test --release --test reference
+
+      - name: Installer
+        shell: bash
+        run: |
+          V=${GITHUB_REF_NAME#v}
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/opennc.iss
+          mkdir -p dist/portable/OpenNC
+          cp target/release/opennc.exe target/release/opennc-cli.exe README.md LICENSE dist/portable/OpenNC/
+          cp -r models dist/portable/OpenNC/
+          (cd dist/portable && 7z a -tzip "../OpenNC-$V-windows-portable.zip" OpenNC > /dev/null)
+          rm -rf dist/portable
+          (cd dist && sha256sum *.exe *.zip > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --title "OpenNC $GITHUB_REF_NAME" --generate-notes
