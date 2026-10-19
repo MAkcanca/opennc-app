@@ -38,7 +38,8 @@ jobs:
         shell: bash
         run: |
           V=${GITHUB_REF_NAME#v}
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/opennc.iss
+          # MSYS_NO_PATHCONV: Git Bash would otherwise turn /DAppVersion into a file path
+          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/opennc.iss
           mkdir -p dist/portable/OpenNC
           cp target/release/opennc.exe target/release/opennc-cli.exe README.md LICENSE dist/portable/OpenNC/
           cp -r models dist/portable/OpenNC/
