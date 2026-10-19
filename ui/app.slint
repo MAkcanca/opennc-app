@@ -1,0 +1,257 @@
+import { ComboBox, Palette } from "std-widgets.slint";
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
+
+export global Theme {
+    out property <color> bg: #0f1117;
+    out property <color> card: #171a23;
+    out property <color> card-border: #242836;
+    out property <color> track: #232733;
+    out property <color> text: #e6e8ef;
+    out property <color> muted: #8b90a0;
+    out property <color> faint: #5b6070;
+    out property <color> accent: #6366f1;
+    out property <color> accent2: #22d3ee;
+    out property <color> ok: #22c55e;
+    out property <color> warn: #eab308;
+    out property <color> danger: #ef4444;
+}
+
+component Card inherits Rectangle {
+    background: Theme.card;
+    border-color: Theme.card-border;
+    border-width: 1px;
+    border-radius: 12px;
+}
+
+component Label inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+component Meter inherits VerticalLayout {
+    in property <string> label;
+    in property <float> level;   // 0..1
+    in property <string> value;  // "-42 dB"
+    in property <brush> fill: @linear-gradient(90deg, Theme.ok, Theme.warn);
+    spacing: 6px;
+    HorizontalLayout {
+        Label { text: root.label; }
+        Rectangle { }
+        Label { text: root.value; font-weight: 400; horizontal-alignment: right; }
+    }
+    Rectangle {
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.track;
+        Rectangle {
+            x: 0;
+            height: parent.height;
+            width: parent.width * root.level;
+            border-radius: 4px;
+            background: root.fill;
+            animate width { duration: 90ms; easing: ease-out; }
+        }
+    }
+}
+
+component PowerButton inherits Rectangle {
+    in property <bool> active;
+    callback clicked;
+    width: 96px;
+    height: 96px;
+    border-radius: 48px;
+    background: root.active ? @linear-gradient(135deg, Theme.accent, Theme.accent2) : #1f2330;
+    border-width: root.active ? 0px : 2px;
+    border-color: #2d3242;
+    drop-shadow-blur: root.active ? 28px : 0px;
+    drop-shadow-color: root.active ? Theme.accent.with-alpha(0.55) : transparent;
+    animate background, drop-shadow-blur, drop-shadow-color { duration: 220ms; easing: ease-in-out; }
+    Path {
+        width: 36px;
+        height: 36px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: "M 18.36 6.64 A 9 9 0 1 1 5.64 6.64 M 12 2 L 12 12";
+        stroke: root.active ? white : Theme.muted;
+        stroke-width: 2.2px;
+        fill: transparent;
+        animate stroke { duration: 200ms; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    states [
+        hover when ta.has-hover && !root.active: { background: #262b3a; }
+    ]
+}
+
+component StrengthSlider inherits Rectangle {
+    in-out property <float> value: 100; // 0..100
+    callback changed(float);
+    height: 24px;
+    property <length> knob: 18px;
+    property <length> usable: root.width - root.knob;
+    function set-from-x(x: length) {
+        root.value = max(0, min(100, (x - root.knob / 2) / root.usable * 100));
+        root.changed(root.value);
+    }
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.track;
+        Rectangle {
+            x: 0;
+            height: parent.height;
+            width: root.knob / 2 + root.usable * root.value / 100;
+            border-radius: 3px;
+            background: @linear-gradient(90deg, Theme.accent, Theme.accent2);
+        }
+    }
+    Rectangle {
+        x: root.usable * root.value / 100;
+        y: (parent.height - self.height) / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: root.knob / 2;
+        background: white;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000080;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        moved => { if (self.pressed) { root.set-from-x(self.mouse-x); } }
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.set-from-x(self.mouse-x); } }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "OpenNC";
+    icon: @image-url("icon.png");
+    width: 400px;
+    height: 700px;
+    background: Theme.bg;
+    default-font-family: "Inter";
+    default-font-size: 13px;
+
+    in property <[string]> inputs;
+    in property <[string]> outputs;
+    in-out property <string> mic;
+    in-out property <string> output;
+    in-out property <float> strength: 100;
+    in property <bool> active;
+    in property <float> mic-level;
+    in property <float> clean-level;
+    in property <string> mic-db: "";
+    in property <string> clean-db: "";
+    in property <string> message: "";
+    in property <bool> error: false;
+    in property <string> version: "OpenNC v1  ·  48 kHz  ·  10 ms frames";
+
+    callback toggle();
+    callback mic-changed(string);
+    callback output-changed(string);
+    callback strength-changed(float);
+    callback refresh-devices();
+
+    init => { Palette.color-scheme = ColorScheme.dark; }
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        // header
+        HorizontalLayout {
+            spacing: 10px;
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 14px;
+                background: @linear-gradient(135deg, Theme.accent, Theme.accent2);
+                Text { text: "N"; color: white; font-weight: 700; font-size: 14px; width: 100%; height: 100%; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Text { text: "OpenNC"; color: Theme.text; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+            Rectangle { }
+            Rectangle {
+                width: 70px;
+                height: 24px;
+                border-radius: 12px;
+                background: root.active ? Theme.ok.with-alpha(0.15) : Theme.track;
+                animate background { duration: 200ms; }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 6px;
+                    alignment: center;
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; y: (parent.height - self.height) / 2; background: root.active ? Theme.ok : Theme.muted; }
+                    Text { text: root.active ? "Active" : "Off"; color: root.active ? Theme.ok : Theme.muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                }
+            }
+        }
+
+        // hero
+        VerticalLayout {
+            spacing: 10px;
+            padding-top: 6px;
+            HorizontalLayout { alignment: center; PowerButton { active: root.active; clicked => { root.toggle(); } } }
+            Text { text: root.active ? "Noise cancellation is on" : "Noise cancellation is off"; color: Theme.text; font-size: 15px; font-weight: 500; horizontal-alignment: center; }
+            Text { text: root.message; color: root.error ? Theme.danger : Theme.muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+        }
+
+        // meters
+        Card {
+            VerticalLayout {
+                padding: 16px;
+                spacing: 14px;
+                Meter { label: "Microphone"; level: root.mic-level; value: root.mic-db; fill: @linear-gradient(90deg, #64748b, #94a3b8); }
+                Meter { label: "Clean output"; level: root.clean-level; value: root.clean-db; }
+            }
+        }
+
+        // devices
+        Card {
+            VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                Label { text: "Microphone"; }
+                ComboBox { model: root.inputs; current-value: root.mic; enabled: !root.active; selected(v) => { root.mic = v; root.mic-changed(v); } }
+                Rectangle { height: 4px; }
+                Label { text: "Send clean audio to"; }
+                ComboBox { model: root.outputs; current-value: root.output; enabled: !root.active; selected(v) => { root.output = v; root.output-changed(v); } }
+                HorizontalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: refresh.width;
+                        height: refresh.height;
+                        refresh-ta := TouchArea { mouse-cursor: pointer; enabled: !root.active; clicked => { root.refresh-devices(); } }
+                        refresh := Text { text: "Refresh devices"; color: refresh-ta.has-hover ? Theme.text : Theme.faint; font-size: 12px; }
+                    }
+                }
+            }
+        }
+
+        // strength
+        Card {
+            VerticalLayout {
+                padding: 16px;
+                spacing: 6px;
+                HorizontalLayout {
+                    Label { text: "Suppression"; }
+                    Rectangle { }
+                    Label { text: "\{round(root.strength)}%"; font-weight: 400; }
+                }
+                StrengthSlider { value <=> root.strength; changed(v) => { root.strength-changed(v); } }
+            }
+        }
+
+        Rectangle { }
+        Text { text: root.version; color: Theme.faint; font-size: 11px; horizontal-alignment: center; }
+    }
+}
