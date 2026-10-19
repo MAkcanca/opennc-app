@@ -167,36 +167,42 @@ component StrengthSlider inherits Rectangle {
     }
 }
 
-component StatusPill inherits Rectangle {
-    in property <bool> active;
-    in property <bool> busy;
-    property <color> tint: root.active ? Theme.ok : (root.busy ? Theme.accent2 : Theme.muted);
-    height: 24px;
-    width: 84px; // fixed so the header never reflows when the label changes
-    border-radius: 12px;
-    background: root.active ? Theme.ok.with-alpha(0.15) : (root.busy ? Theme.accent2.with-alpha(0.12) : Theme.track);
-    animate background { duration: 260ms; }
-    lay := HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 6px;
-        alignment: center;
-        Rectangle {
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
-            y: (parent.height - self.height) / 2;
-            background: root.tint;
-            animate background { duration: 260ms; }
-        }
-        Text {
-            text: root.busy ? (root.active ? "Stopping" : "Starting") : (root.active ? "Active" : "Off");
-            color: root.tint;
-            font-size: 12px;
-            font-weight: 500;
-            vertical-alignment: center;
-            animate color { duration: 260ms; }
-        }
+// A line of text that crossfades between two fixed strings instead of re-wrapping: nothing ever moves.
+component CrossfadeText inherits Rectangle {
+    in property <string> off-text;
+    in property <string> on-text;
+    in property <bool> on;
+    in property <length> font-size: 13px;
+    in property <int> font-weight: 400;
+    in property <color> text-color: Theme.text;
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.off-text;
+        color: root.text-color;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        horizontal-alignment: center;
+        vertical-alignment: top;
+        wrap: word-wrap;
+        overflow: elide;
+        opacity: root.on ? 0.0 : 1.0;
+        // outgoing text fades first, the incoming one follows: never two strings on top of each other
+        animate opacity { duration: 170ms; delay: root.on ? 0ms : 170ms; easing: ease-in-out; }
+    }
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.on-text;
+        color: root.text-color;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        horizontal-alignment: center;
+        vertical-alignment: top;
+        wrap: word-wrap;
+        overflow: elide;
+        opacity: root.on ? 1.0 : 0.0;
+        animate opacity { duration: 170ms; delay: root.on ? 170ms : 0ms; easing: ease-in-out; }
     }
 }
 
@@ -220,7 +226,9 @@ export component AppWindow inherits Window {
     in property <float> clean-level;
     in property <string> mic-db: "";
     in property <string> clean-db: "";
-    in property <string> message: "";
+    in property <string> idle-message: "";
+    in property <string> live-message: "";
+    in property <string> error-message: "";
     in property <bool> error: false;
     in property <string> version: "OpenNC v1  ·  48 kHz  ·  10 ms frames";
 
@@ -248,7 +256,6 @@ export component AppWindow inherits Window {
             }
             Text { text: "OpenNC"; color: Theme.text; font-size: 18px; font-weight: 600; vertical-alignment: center; }
             Rectangle { }
-            StatusPill { active: root.active; busy: root.busy; }
         }
 
         // hero
@@ -256,23 +263,40 @@ export component AppWindow inherits Window {
             spacing: 10px;
             padding-top: 6px;
             HorizontalLayout { alignment: center; PowerButton { active: root.active; busy: root.busy; clicked => { root.toggle(); } } }
-            Text {
-                text: root.busy ? (root.active ? "Shutting down" : "Starting up") : (root.active ? "Noise cancellation is on" : "Noise cancellation is off");
-                color: Theme.text;
+            CrossfadeText {
+                height: 22px;
+                off-text: "Noise cancellation is off";
+                on-text: "Noise cancellation is on";
+                on: root.active;
                 font-size: 15px;
                 font-weight: 500;
-                horizontal-alignment: center;
             }
-            Text {
-                text: root.message;
-                color: root.error ? Theme.danger : Theme.muted;
-                font-size: 12px;
-                height: 36px; // always two lines tall so the cards below never move when the message changes
-                horizontal-alignment: center;
-                vertical-alignment: top;
-                wrap: word-wrap;
-                overflow: elide;
-                animate color { duration: 200ms; }
+            Rectangle {
+                height: 36px; // always two lines tall, so the cards below never move
+                CrossfadeText {
+                    width: 100%;
+                    height: 100%;
+                    off-text: root.idle-message;
+                    on-text: root.live-message;
+                    on: root.active;
+                    font-size: 12px;
+                    text-color: Theme.muted;
+                    opacity: root.error ? 0.0 : 1.0;
+                    animate opacity { duration: 200ms; }
+                }
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: root.error-message;
+                    color: Theme.danger;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: top;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    opacity: root.error ? 1.0 : 0.0;
+                    animate opacity { duration: 200ms; }
+                }
             }
         }
 

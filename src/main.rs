@@ -148,7 +148,6 @@ fn start(ui: Weak<AppWindow>, state: Shared_) {
     if let Some(ui) = ui.upgrade() {
         ui.set_busy(true);
         ui.set_error(false);
-        ui.set_message("Starting".into());
     }
     std::thread::spawn(move || {
         let engine = match engine {
@@ -165,14 +164,14 @@ fn start(ui: Weak<AppWindow>, state: Shared_) {
                     st.runner = Some(r);
                     st.phase = Phase::On;
                     ui.set_active(true);
-                    ui.set_message(live_message(&st.cfg).into());
+                    ui.set_live_message(live_message(&st.cfg).into());
                 }
                 Err(e) => {
                     st.phase = Phase::Off;
                     eprintln!("start failed: {e:#}");
                     ui.set_active(false);
+                    ui.set_error_message(format!("{e:#}").into());
                     ui.set_error(true);
-                    ui.set_message(format!("{e:#}").into());
                 }
             }
         });
@@ -193,7 +192,6 @@ fn stop(ui: Weak<AppWindow>, state: Shared_) {
     if let Some(ui) = ui.upgrade() {
         ui.set_busy(true);
         ui.set_active(false);
-        ui.set_message("Stopping".into());
         ui.set_mic_level(0.0);
         ui.set_clean_level(0.0);
         ui.set_mic_db("".into());
@@ -207,7 +205,7 @@ fn stop(ui: Weak<AppWindow>, state: Shared_) {
             st.phase = Phase::Off;
             ui.set_busy(false);
             ui.set_error(false);
-            ui.set_message(idle_message(&st.cfg).into());
+            ui.set_idle_message(idle_message(&st.cfg).into());
             drop(st);
             prepare_engine(&state2);
         });
@@ -236,7 +234,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut cfg = load_config();
     populate_devices(&ui, &mut cfg);
     ui.set_strength(cfg.strength);
-    ui.set_message(idle_message(&cfg).into());
+    ui.set_idle_message(idle_message(&cfg).into());
+    ui.set_live_message(live_message(&cfg).into());
     let state: Shared_ = Arc::new(Mutex::new(State { cfg, phase: Phase::Off, runner: None, prepared: None, shown_mic: -90.0, shown_clean: -90.0 }));
     prepare_engine(&state);
 
@@ -268,7 +267,9 @@ fn main() -> Result<(), slint::PlatformError> {
             st.cfg.output = v.to_string();
             save_config(&st.cfg);
             if st.phase == Phase::Off {
-                ui.unwrap().set_message(idle_message(&st.cfg).into());
+                let ui = ui.unwrap();
+                ui.set_idle_message(idle_message(&st.cfg).into());
+                ui.set_live_message(live_message(&st.cfg).into());
             }
         }
     });
@@ -309,8 +310,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 st.runner = None;
                 st.phase = Phase::Off;
                 ui.set_active(false);
+                ui.set_error_message(if why.is_empty() { "The audio device stopped.".into() } else { why.into() });
                 ui.set_error(true);
-                ui.set_message(if why.is_empty() { "The audio device stopped.".into() } else { why.into() });
                 ui.set_mic_level(0.0);
                 ui.set_clean_level(0.0);
                 return;
@@ -327,7 +328,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_mic_db(text(st.shown_mic).into());
             ui.set_clean_db(text(st.shown_clean).into());
             if drops > 2 && !ui.get_error() {
-                ui.set_message(format!("Live. {drops} audio buffers dropped so far.").into());
+                ui.set_live_message(format!("Live. {drops} audio buffers dropped so far.").into());
             }
         }
     });
