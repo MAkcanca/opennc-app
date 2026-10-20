@@ -39,7 +39,7 @@ sha2 = "0.10"
 ureq = { version = "3.4", default-features = false, features = ["native-tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 winreg = "0.56"
 
 [build-dependencies]

@@ -2,6 +2,7 @@
 pub mod audio;
 pub mod autostart;
 pub mod engine;
+pub mod instance;
 pub mod log;
 pub mod npy;
 pub mod tray;

@@ -279,6 +279,10 @@ fn check_updates(ui: Weak<AppWindow>, state: St) {
 fn main() -> Result<(), slint::PlatformError> {
     let minimized = std::env::args().any(|a| a == "--minimized");
     log(format!("OpenNC {} starting{}", update::CURRENT, if minimized { " (minimized)" } else { "" }));
+    let Some(instance) = opennc::instance::acquire(!minimized) else {
+        log("another OpenNC is already running; handing over to it");
+        return Ok(());
+    };
     let ui = AppWindow::new()?;
     let mut cfg = load_config();
     let present = populate_devices(&ui, &mut cfg);
@@ -430,12 +434,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         move || {
             let ui = ui.unwrap();
+            if instance.show_requested() {
+                let _ = ui.show();
+                bring_to_front(&ui);
+            }
             let actions = TRAY.with(|t| t.borrow().as_ref().map(|t| t.poll()).unwrap_or_default());
             for a in actions {
                 match a {
                     TrayAction::Toggle => ui.invoke_toggle(),
                     TrayAction::Show => {
                         let _ = ui.show();
+                        bring_to_front(&ui);
                     }
                     TrayAction::SetAutostart(on) => {
                         ui.set_start_with_windows(on);
@@ -530,3 +539,19 @@ fn dark_title_bar(ui: &AppWindow) {
 }
 #[cfg(not(windows))]
 fn dark_title_bar(_ui: &AppWindow) {}
+
+/// Raise the window after a second launch or a tray click. Windows may refuse to take focus from the app the user
+/// is in; then it flashes the taskbar button instead, which is the right signal anyway.
+#[cfg(windows)]
+fn bring_to_front(ui: &AppWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let holder = ui.window().window_handle();
+    let Ok(handle) = holder.window_handle() else { return };
+    if let RawWindowHandle::Win32(w) = handle.as_raw() {
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(w.hwnd.get() as _);
+        }
+    }
+}
+#[cfg(not(windows))]
+fn bring_to_front(_ui: &AppWindow) {}
