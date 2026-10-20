@@ -131,19 +131,11 @@ fn devices_present(cfg: &Config) -> bool {
     inputs.contains(&cfg.mic) && outputs.contains(&cfg.output)
 }
 
-fn idle_message(cfg: &Config) -> String {
+fn output_hint(cfg: &Config) -> String {
     if is_cable(&cfg.output) {
-        "Press to start. Then pick \"CABLE Output\" as the microphone in your apps.".into()
+        "Pick \"CABLE Output\" as the microphone in your apps.".into()
     } else {
-        "Press to start. Clean audio goes to the selected output.".into()
-    }
-}
-
-fn live_message(cfg: &Config) -> String {
-    if is_cable(&cfg.output) {
-        "Live. Your apps should use \"CABLE Output\" as their microphone.".into()
-    } else {
-        "Live.".into()
+        "Clean audio goes to this device.".into()
     }
 }
 
@@ -207,7 +199,6 @@ fn start(ui: Weak<AppWindow>, state: St) {
                     ui.set_active(true);
                     ui.set_waiting(false);
                     ui.set_notice("".into());
-                    ui.set_live_message(live_message(&st.cfg).into());
                     with_tray(|t| t.set_active(true));
                 }
                 Err(e) => {
@@ -266,7 +257,6 @@ fn stop(ui: Weak<AppWindow>, state: St) {
             st.phase = Phase::Off;
             ui.set_busy(false);
             ui.set_error(false);
-            ui.set_idle_message(idle_message(&st.cfg).into());
             drop(st);
             prepare_engine(&state2);
         });
@@ -293,8 +283,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let mut cfg = load_config();
     let present = populate_devices(&ui, &mut cfg);
     ui.set_strength(cfg.strength);
-    ui.set_idle_message(idle_message(&cfg).into());
-    ui.set_live_message(live_message(&cfg).into());
+    ui.set_output_hint(output_hint(&cfg).into());
     ui.set_auto_on(cfg.auto_on);
     ui.set_start_with_windows(autostart::is_enabled());
     ui.set_version(format!("OpenNC {}  ·  48 kHz  ·  10 ms frames", update::CURRENT).into());
@@ -350,8 +339,7 @@ fn main() -> Result<(), slint::PlatformError> {
             save_config(&st.cfg);
             if st.phase == Phase::Off {
                 let ui = ui.unwrap();
-                ui.set_idle_message(idle_message(&st.cfg).into());
-                ui.set_live_message(live_message(&st.cfg).into());
+                ui.set_output_hint(output_hint(&st.cfg).into());
             }
         }
     });
@@ -481,7 +469,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     let mic = Shared::get_f32(&r.shared.in_level).max(-90.0);
                     let clean = Shared::get_f32(&r.shared.out_level).max(-90.0);
-                    let drops = r.shared.in_drops.load(Ordering::Relaxed) + r.shared.out_underruns.load(Ordering::Relaxed);
                     st.shown_mic = mic.max(st.shown_mic - 2.5);
                     st.shown_clean = clean.max(st.shown_clean - 2.5);
                     let frac = |db: f32| ((db + 60.0) / 60.0).clamp(0.0, 1.0);
@@ -490,9 +477,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_clean_level(frac(st.shown_clean));
                     ui.set_mic_db(text(st.shown_mic).into());
                     ui.set_clean_db(text(st.shown_clean).into());
-                    if drops > 2 && !ui.get_error() {
-                        ui.set_live_message(format!("Live. {drops} audio buffers dropped so far.").into());
-                    }
                 }
                 _ => {}
             }

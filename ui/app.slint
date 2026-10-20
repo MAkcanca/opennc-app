@@ -252,7 +252,7 @@ export component AppWindow inherits Window {
     title: "OpenNC";
     icon: @image-url("icon.png");
     width: 400px;
-    height: 800px;
+    height: 824px;
     background: Theme.bg;
     default-font-family: "Inter";
     default-font-size: 13px;
@@ -269,8 +269,7 @@ export component AppWindow inherits Window {
     in property <float> clean-level;
     in property <string> mic-db: "";
     in property <string> clean-db: "";
-    in property <string> idle-message: "";
-    in property <string> live-message: "";
+    in property <string> output-hint: "";
     in property <string> notice: "";          // shown instead of the messages, muted (e.g. waiting for a device)
     in property <string> error-message: "";
     in property <bool> error: false;
@@ -361,17 +360,6 @@ export component AppWindow inherits Window {
             }
             Rectangle {
                 height: 36px; // always two lines tall, so the cards below never move
-                CrossfadeText {
-                    width: 100%;
-                    height: 100%;
-                    off-text: root.idle-message;
-                    on-text: root.live-message;
-                    on: root.active;
-                    font-size: 12px;
-                    text-color: Theme.muted;
-                    opacity: root.error || root.notice != "" ? 0.0 : 1.0;
-                    animate opacity { duration: 200ms; }
-                }
                 Text {
                     width: 100%;
                     height: 100%;
@@ -430,6 +418,7 @@ export component AppWindow inherits Window {
                 Rectangle { height: 4px; }
                 Label { text: "Send clean audio to"; }
                 ComboBox { model: root.outputs; current-value: root.output; enabled: !root.active && !root.busy; selected(v) => { root.output = v; root.output-changed(v); } }
+                Text { height: 16px; text: root.output-hint; color: Theme.muted; font-size: 12px; overflow: elide; }
                 HorizontalLayout {
                     alignment: end;
                     Rectangle {
